@@ -730,6 +730,12 @@ class ModelBase:
         self._write_scale_tensor(new_name.replace(".weight", ".scale"), scale2)
         self._write_scale_tensor(new_name.replace(".weight", ".input_scale"), input_scale)
 
+    # NVFP4 tensors are repacked before modify_tensors runs, so fix their layout here
+    # weight and scale keep the same rows, so a row permutation applies to both
+    def modify_nvfp4_tensor(self, name: str, weight: Tensor, scale: Tensor) -> tuple[Tensor, Tensor]:
+        del name  # unused
+        return weight, scale
+
     def _generate_nvfp4_tensors(self):
         # Per-layer expert merging to avoid holding all experts in memory
         expert_blocks: dict[tuple[int, str], list[tuple[int, np.ndarray]]] = {}
@@ -754,6 +760,8 @@ class ModelBase:
             # Skip non-NVFP4 tensors (e.g. FP8 with per-channel 1D scales)
             if scale.ndim < 2:
                 continue
+
+            weight, scale = self.modify_nvfp4_tensor(name, weight, scale)
 
             scale2 = LazyTorchTensor.to_eager(self.model_tensors.get(scale2_name, lambda: torch.tensor(1.0))())
             input_scale = LazyTorchTensor.to_eager(self.model_tensors.get(input_scale_name, lambda: torch.tensor(1.0))())

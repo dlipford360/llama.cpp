@@ -49,6 +49,16 @@ class MuseGlimmerModel(TextModel):
         self.gguf_writer.add_sliding_window(hparams["sliding_window"])
         self.gguf_writer.add_sliding_window_pattern([t == "sliding_attention" for t in hparams["layer_types"]])
 
+    def modify_nvfp4_tensor(self, name: str, weight: Tensor, scale: Tensor) -> tuple[Tensor, Tensor]:
+        # same Q/K unpermute as modify_tensors below, which packed tensors skip
+        if ".self_attn.q_proj." in name:
+            n_heads = int(self.hparams["num_attention_heads"])
+        elif ".self_attn.k_proj." in name:
+            n_heads = int(self.hparams["num_key_value_heads"])
+        else:
+            return weight, scale
+        return _unpermute_for_rope(weight, n_heads), _unpermute_for_rope(scale, n_heads)
+
     def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
         shift = self.norm_shift(name)
         if shift != 0.0:
@@ -62,7 +72,7 @@ class MuseGlimmerModel(TextModel):
 
         # Synthesize QK-norm weights to absorb qk_scale_factor.
         # MuseGlimmer implementation: scaleless RMSNorm followed by qk_scale_factor..
-        if bid is not None and name.endswith(f"model.layers.{bid}.self_attn.q_proj.weight"):
+        if bid is not None and name.endswith(f"layers.{bid}.input_layernorm.weight"):
             head_dim = self.hparams["head_dim"]
             q_scale = float(self.hparams["qk_scale_factor"])
             yield (
